@@ -42,7 +42,7 @@ export default function Home() {
   async function submitAnswer() {
     const value = input.trim()
     if (!value || loading || finished) return
-    const next = [...messages, { role: 'candidate', content: value }]
+    const next: Message[] = [...messages, { role: 'candidate', content: value }]
     setMessages(next)
     setInput('')
     setLoading(true)
