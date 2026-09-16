@@ -1,25 +1,47 @@
 import { InferenceClient } from '@huggingface/inference'
 
-export async function askHF(
-  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
-) {
+type ChatMessage = {
+  role: 'system' | 'user' | 'assistant'
+  content: string
+}
+
+export async function askHF(messages: ChatMessage[]) {
   const token = process.env.HF_TOKEN
   if (!token) throw new Error('HF_TOKEN is missing on the server.')
 
   const hf = new InferenceClient(token)
-  // Small, simple instruction model. This avoids relying on heavyweight
-  // structured-output support from larger models/providers.
-  const model = process.env.HF_MODEL || 'google/gemma-2-2b-it'
 
-  const result = await hf.chatCompletion({
-    model,
-    messages,
-    max_tokens: 120,
-    temperature: 0.15,
-    provider: 'auto',
-  })
+  // Use a small model that is currently listed with Hugging Face Inference
+  // Provider support. Keep this fixed so an old Vercel HF_MODEL variable
+  // cannot accidentally select an unavailable model.
+  const models = [
+    'Qwen/Qwen2.5-1.5B-Instruct',
+    'Qwen/Qwen2.5-3B-Instruct',
+  ]
 
-  return result.choices?.[0]?.message?.content?.trim() || ''
+  let lastError: unknown = null
+
+  for (const model of models) {
+    try {
+      const result = await hf.chatCompletion({
+        model,
+        messages,
+        max_tokens: 160,
+        temperature: 0.1,
+        provider: 'auto',
+      })
+
+      const content = result.choices?.[0]?.message?.content?.trim()
+      if (content) return content
+    } catch (error) {
+      lastError = error
+      console.error(`HF model ${model} failed:`, error)
+    }
+  }
+
+  throw new Error(
+    `Hugging Face inference failed. ${lastError instanceof Error ? lastError.message : 'No available model provider.'}`,
+  )
 }
 
 export function extractJson(text: string) {
@@ -34,13 +56,15 @@ export function extractJson(text: string) {
   } catch {
     const start = cleaned.indexOf('{')
     const end = cleaned.lastIndexOf('}')
+
     if (start >= 0 && end > start) {
       try {
         return JSON.parse(cleaned.slice(start, end + 1))
       } catch {
-        // Fall through.
+        // Continue below.
       }
     }
+
     throw new Error('The AI returned an invalid response. Please try again.')
   }
 }
