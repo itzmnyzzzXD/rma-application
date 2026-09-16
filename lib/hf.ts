@@ -3,6 +3,7 @@ type ChatMessage = {
   content: string
 }
 
+// Direct OpenAI-compatible Hugging Face router, matching the working Nova pattern.
 const API_URL = 'https://router.huggingface.co/v1/chat/completions'
 const MODEL = 'openai/gpt-oss-120b:fastest'
 
