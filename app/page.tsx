@@ -1,11 +1,13 @@
 'use client'
 
+import Link from 'next/link'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowUp, Check, Loader2, ShieldCheck, Sparkles, Trophy, X } from 'lucide-react'
 
 type Message = { role: 'interviewer' | 'candidate'; content: string }
 
 const starter: Message[] = []
+const APPLICATION_TYPE = 'player' as const
 
 export default function Home() {
   const [messages, setMessages] = useState<Message[]>(starter)
@@ -28,7 +30,11 @@ export default function Home() {
     setLoading(true)
     setError('')
     try {
-      const r = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ transcript: [] }) })
+      const r = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transcript: [], applicationType: APPLICATION_TYPE }),
+      })
       const data = await r.json()
       if (!r.ok) throw new Error(data.error || 'Could not start interview.')
       setMessages([{ role: 'interviewer', content: data.question }])
@@ -49,7 +55,11 @@ export default function Home() {
     setError('')
 
     try {
-      const r = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ transcript: next }) })
+      const r = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transcript: next, applicationType: APPLICATION_TYPE }),
+      })
       const data = await r.json()
       if (!r.ok) throw new Error(data.error || 'AI request failed.')
       if (data.done) {
@@ -66,7 +76,11 @@ export default function Home() {
     setLoading(true)
     setError('')
     try {
-      const r = await fetch('/api/submit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ transcript: messages, startedAt }) })
+      const r = await fetch('/api/submit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transcript: messages, startedAt, applicationType: APPLICATION_TYPE }),
+      })
       const data = await r.json()
       if (!r.ok) throw new Error(data.error || 'Could not send application.')
       setSent(true)
@@ -81,7 +95,10 @@ export default function Home() {
       <section className="app-card">
         <header className="topbar">
           <div className="brand"><div className="crest"><Trophy size={17}/></div><div><b>RMA</b><span>AI RECRUITMENT</span></div></div>
-          <div className="status"><span className="dot"/> LIVE INTERVIEW</div>
+          <div className="topbar-actions">
+            <Link className="nav-link" href="/staff">Staff application</Link>
+            <div className="status"><span className="dot"/> LIVE INTERVIEW</div>
+          </div>
         </header>
 
         <div className="hero">
