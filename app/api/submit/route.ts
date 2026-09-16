@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { SUMMARY_PROMPT } from '@/lib/prompts'
+import { STAFF_SUMMARY_PROMPT, SUMMARY_PROMPT } from '@/lib/prompts'
 import { askHF, extractJson } from '@/lib/hf'
 
 export const runtime = 'nodejs'
@@ -14,7 +14,7 @@ function cleanList(value: unknown, max = 6) {
     : []
 }
 
-function fallbackSummary(transcript: Array<{ role: string; content: string }>) {
+function fallbackSummary(type: 'player' | 'staff', transcript: Array<{ role: string; content: string }>) {
   const candidateMessages = transcript.filter(m => m.role === 'candidate').map(m => m.content)
   const first = candidateMessages[0] || 'Unknown'
   const joined = candidateMessages.join(' ')
@@ -22,11 +22,12 @@ function fallbackSummary(transcript: Array<{ role: string; content: string }>) {
 
   return {
     candidate: first,
-    position,
+    position: type === 'player' ? position : undefined,
+    role: type === 'staff' ? 'Not stated' : undefined,
     experience: candidateMessages[3] || 'Not stated',
     activity: candidateMessages[5] || 'Not stated',
     strengths: [],
-    concerns: [],
+    concerns: ['AI summary unavailable; transcript requires manual review.'],
     evidence: joined ? [clampText(joined, 500)] : [],
     followUp: [],
     recommendation: 'REVIEW',
@@ -34,9 +35,9 @@ function fallbackSummary(transcript: Array<{ role: string; content: string }>) {
 }
 
 async function postWebhook(webhook: string, payload: unknown, wait = false) {
-  const url = wait ? `${webhook}?wait=true` : webhook
+  const url = wait ? `${webhook}${webhook.includes('?') ? '&' : '?'}wait=true` : webhook
 
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const response = await fetch(url, {
         method: 'POST',
@@ -50,15 +51,16 @@ async function postWebhook(webhook: string, payload: unknown, wait = false) {
       const detail = await response.text()
       console.error(`Discord webhook attempt ${attempt + 1} failed:`, detail)
 
-      if (attempt === 0 && (response.status === 429 || response.status >= 500)) {
-        await new Promise(resolve => setTimeout(resolve, 1000))
+      if (attempt < 2 && (response.status === 429 || response.status >= 500)) {
+        const retryAfter = Number(response.headers.get('retry-after') || '1')
+        await new Promise(resolve => setTimeout(resolve, Math.min(Math.max(retryAfter * 1000, 500), 5000)))
         continue
       }
 
       return false
     } catch (error) {
       console.error(`Discord webhook attempt ${attempt + 1} threw:`, error)
-      if (attempt === 0) {
+      if (attempt < 2) {
         await new Promise(resolve => setTimeout(resolve, 500))
         continue
       }
@@ -74,10 +76,12 @@ export async function POST(request: Request) {
     const body = await request.json()
     const transcript = Array.isArray(body.transcript) ? body.transcript : []
     const startedAt = body.startedAt || new Date().toISOString()
+    const type: 'player' | 'staff' = body.applicationType === 'staff' ? 'staff' : 'player'
     const candidateAnswerCount = transcript.filter((m: any) => m?.role === 'candidate').length
+    const minimumAnswers = type === 'staff' ? 8 : 10
 
-    if (candidateAnswerCount < 10) {
-      return NextResponse.json({ error: 'The interview needs at least 10 applicant answers.' }, { status: 400 })
+    if (candidateAnswerCount < minimumAnswers) {
+      return NextResponse.json({ error: `The ${type} interview needs at least ${minimumAnswers} applicant answers.` }, { status: 400 })
     }
 
     const cleanTranscript = transcript.slice(0, 60).map((m: any) => ({
@@ -88,13 +92,13 @@ export async function POST(request: Request) {
     let summary: any
     try {
       const summaryRaw = await askHF([
-        { role: 'system', content: SUMMARY_PROMPT },
+        { role: 'system', content: type === 'staff' ? STAFF_SUMMARY_PROMPT : SUMMARY_PROMPT },
         { role: 'user', content: JSON.stringify(cleanTranscript) },
       ])
       summary = extractJson(summaryRaw)
     } catch (summaryError) {
       console.error('AI summary failed; using safe fallback summary:', summaryError)
-      summary = fallbackSummary(cleanTranscript)
+      summary = fallbackSummary(type, cleanTranscript)
     }
 
     const webhook = process.env.DISCORD_WEBHOOK_URL
@@ -103,25 +107,27 @@ export async function POST(request: Request) {
       throw new Error('DISCORD_WEBHOOK_URL is invalid.')
     }
 
-    const title = `RMA Application • ${clampText(summary.candidate || 'Unknown Candidate', 100)}`
+    const candidate = clampText(summary.candidate || candidateAnswerCount ? cleanTranscript.find(m => m.role === 'candidate')?.content : 'Unknown Candidate', 100)
     const strengths = cleanList(summary.strengths)
     const concerns = cleanList(summary.concerns)
     const evidence = cleanList(summary.evidence)
+    const roleOrPosition = type === 'staff' ? summary.role : summary.position
+    const routing = clampText(summary.recommendation || 'REVIEW', 40)
 
     const transcriptText = cleanTranscript
-      .map((m: any, i: number) => `**${m.role === 'candidate' ? 'Candidate' : 'RMA AI'} ${i + 1}:** ${m.content}`)
+      .map((m: any, i: number) => `**${m.role === 'candidate' ? 'Applicant' : 'RMA AI'} ${i + 1}:** ${m.content}`)
       .join('\n\n')
 
     const summaryPayload = {
       username: 'RMA Recruiter',
       embeds: [
         {
-          title,
-          description: `**Status:** 🟡 PENDING HUMAN REVIEW\n**AI routing:** ${clampText(summary.recommendation || 'REVIEW', 40)}`,
-          color: 0xD9B300,
+          title: `${type === 'staff' ? 'RMA Staff Application' : 'RMA Player Application'} • ${candidate}`,
+          description: `**Status:** 🟡 PENDING HUMAN REVIEW\n**AI routing:** ${routing}`,
+          color: type === 'staff' ? 0x7c3aed : 0xD9B300,
           fields: [
-            { name: 'Discord', value: `\`${clampText(summary.candidate || 'Unknown', 100)}\``, inline: true },
-            { name: 'Position', value: clampText(summary.position || 'Unknown', 120), inline: true },
+            { name: 'Discord', value: `\`${candidate}\``, inline: true },
+            { name: type === 'staff' ? 'Desired role' : 'Position', value: clampText(roleOrPosition || 'Unknown', 120), inline: true },
             { name: 'Experience', value: clampText(summary.experience || 'Not stated', 700), inline: false },
             { name: 'Activity', value: clampText(summary.activity || 'Not stated', 500), inline: false },
             { name: 'Strengths', value: strengths.length ? strengths.map(x => `• ${x}`).join('\n') : 'None captured', inline: false },
@@ -129,7 +135,7 @@ export async function POST(request: Request) {
             { name: 'Evidence', value: evidence.length ? evidence.map(x => `• ${x}`).join('\n') : 'No evidence extracted', inline: false },
             { name: 'Interview started', value: clampText(startedAt, 80), inline: true },
           ],
-          footer: { text: process.env.CLUB_NAME || 'RMA — Real Madrid Association' },
+          footer: { text: `${process.env.CLUB_NAME || 'RMA — Real Madrid Association'} • ${type === 'staff' ? 'Staff' : 'Player'}` },
           timestamp: new Date().toISOString(),
         },
       ],
@@ -140,14 +146,12 @@ export async function POST(request: Request) {
     if (!summarySent) return NextResponse.json({ error: 'Discord webhook failed.' }, { status: 502 })
 
     const chunks: string[] = []
-    for (let i = 0; i < transcriptText.length; i += 1800) {
-      chunks.push(transcriptText.slice(i, i + 1800))
-    }
+    for (let i = 0; i < transcriptText.length; i += 1800) chunks.push(transcriptText.slice(i, i + 1800))
 
     for (let i = 0; i < chunks.length; i++) {
       const sent = await postWebhook(webhook, {
         username: 'RMA Recruiter',
-        content: `${i === 0 ? '**📄 FULL INTERVIEW TRANSCRIPT**\n' : ''}${chunks[i]}`,
+        content: `${i === 0 ? `**📄 FULL ${type === 'staff' ? 'STAFF' : 'PLAYER'} INTERVIEW TRANSCRIPT**\n` : ''}${chunks[i]}`,
         allowed_mentions: { parse: [] },
       })
       if (!sent) return NextResponse.json({ error: 'Discord transcript delivery failed.' }, { status: 502 })
