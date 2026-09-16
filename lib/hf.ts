@@ -1,25 +1,5 @@
 import { InferenceClient } from '@huggingface/inference'
 
-const QUESTION_SCHEMA = {
-  type: 'json_schema',
-  json_schema: {
-    name: 'rma_interview_question',
-    strict: true,
-    schema: {
-      type: 'object',
-      properties: {
-        question: { type: 'string' },
-        done: { type: 'boolean' },
-        questionNumber: { type: 'integer', minimum: 1, maximum: 17 },
-        focus: { type: 'string' },
-        reason: { type: 'string' },
-      },
-      required: ['question', 'done', 'questionNumber', 'focus', 'reason'],
-      additionalProperties: false,
-    },
-  },
-} as const
-
 export async function askHF(
   messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
 ) {
@@ -27,16 +7,16 @@ export async function askHF(
   if (!token) throw new Error('HF_TOKEN is missing on the server.')
 
   const hf = new InferenceClient(token)
-  // Lighter/faster model. Override with HF_MODEL in Vercel if desired.
-  const model = process.env.HF_MODEL || 'Qwen/Qwen3-8B'
+  // Small, simple instruction model. This avoids relying on heavyweight
+  // structured-output support from larger models/providers.
+  const model = process.env.HF_MODEL || 'google/gemma-2-2b-it'
 
   const result = await hf.chatCompletion({
     model,
     messages,
-    max_tokens: 300,
-    temperature: 0.25,
+    max_tokens: 120,
+    temperature: 0.15,
     provider: 'auto',
-    response_format: QUESTION_SCHEMA,
   })
 
   return result.choices?.[0]?.message?.content?.trim() || ''
@@ -58,7 +38,7 @@ export function extractJson(text: string) {
       try {
         return JSON.parse(cleaned.slice(start, end + 1))
       } catch {
-        // Fall through to the useful error below.
+        // Fall through.
       }
     }
     throw new Error('The AI returned an invalid response. Please try again.')
