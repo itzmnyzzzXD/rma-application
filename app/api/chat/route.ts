@@ -4,6 +4,9 @@ import { askHF } from '@/lib/hf'
 
 export const runtime = 'nodejs'
 
+const MIN_ANSWERS = 10
+const MAX_ANSWERS = 17
+
 function cleanQuestion(text: string) {
   return text
     .replace(/^```[\s\S]*?```$/g, '')
@@ -18,11 +21,10 @@ export async function POST(request: Request) {
     const transcript = Array.isArray(body.transcript) ? body.transcript : []
     const answerCount = transcript.filter((m: any) => m?.role === 'candidate').length
 
-    if (answerCount >= 17) {
-      return NextResponse.json({ done: true })
+    if (answerCount >= MAX_ANSWERS) {
+      return NextResponse.json({ done: true, questionNumber: MAX_ANSWERS })
     }
 
-    // Guarantee the first question is always the Discord username prompt.
     if (answerCount === 0) {
       return NextResponse.json({
         question: "What’s your Discord username?",
@@ -36,11 +38,11 @@ export async function POST(request: Request) {
       { role: 'system' as const, content: SYSTEM_PROMPT },
       ...transcript.slice(-30).map((m: any) => ({
         role: m.role === 'candidate' ? 'user' as const : 'assistant' as const,
-        content: String(m.content ?? ''),
+        content: String(m.content ?? '').slice(0, 2000),
       })),
       {
         role: 'user' as const,
-        content: `Ask exactly ONE short next interview question. There have been ${answerCount} applicant answers. Reply with ONLY the question text. No JSON, no explanation, no labels.`,
+        content: `Ask exactly ONE short next interview question. There have been ${answerCount} applicant answers. If this is answer ${MIN_ANSWERS} or later, keep gathering useful evidence but stay concise. Reply with ONLY the question text. No JSON, no explanation, no labels.`,
       },
     ]
 
@@ -51,14 +53,20 @@ export async function POST(request: Request) {
       throw new Error('The AI returned an empty question.')
     }
 
+    const nextQuestionNumber = answerCount + 1
+    const doneAfterThisAnswer = answerCount >= MIN_ANSWERS
+
     return NextResponse.json({
-      question,
-      done: answerCount >= 10 && answerCount >= 17,
-      questionNumber: Math.min(answerCount + 1, 17),
+      question: doneAfterThisAnswer ? undefined : question,
+      done: doneAfterThisAnswer,
+      questionNumber: Math.min(nextQuestionNumber, MAX_ANSWERS),
       focus: 'adaptive',
     })
   } catch (error) {
     console.error(error)
-    return NextResponse.json({ error: error instanceof Error ? error.message : 'AI request failed.' }, { status: 500 })
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'AI request failed.' },
+      { status: 500 },
+    )
   }
 }
