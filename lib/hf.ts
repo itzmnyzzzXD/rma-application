@@ -11,12 +11,11 @@ export async function askHF(messages: ChatMessage[]) {
 
   const hf = new InferenceClient(token)
 
-  // Use a small model that is currently listed with Hugging Face Inference
-  // Provider support. Keep this fixed so an old Vercel HF_MODEL variable
-  // cannot accidentally select an unavailable model.
+  // Tiny model with current Hugging Face provider availability.
+  // The app no longer requires the model to produce JSON.
   const models = [
-    'Qwen/Qwen2.5-1.5B-Instruct',
-    'Qwen/Qwen2.5-3B-Instruct',
+    'google/gemma-3-1b-it',
+    'Qwen/Qwen3-4B',
   ]
 
   let lastError: unknown = null
@@ -26,8 +25,8 @@ export async function askHF(messages: ChatMessage[]) {
       const result = await hf.chatCompletion({
         model,
         messages,
-        max_tokens: 160,
-        temperature: 0.1,
+        max_tokens: 100,
+        temperature: 0.2,
         provider: 'auto',
       })
 
@@ -40,31 +39,6 @@ export async function askHF(messages: ChatMessage[]) {
   }
 
   throw new Error(
-    `Hugging Face inference failed. ${lastError instanceof Error ? lastError.message : 'No available model provider.'}`,
+    `Hugging Face provider failed. ${lastError instanceof Error ? lastError.message : 'No available provider.'}`,
   )
-}
-
-export function extractJson(text: string) {
-  const cleaned = text
-    .replace(/^```json\s*/i, '')
-    .replace(/^```\s*/i, '')
-    .replace(/\s*```$/i, '')
-    .trim()
-
-  try {
-    return JSON.parse(cleaned)
-  } catch {
-    const start = cleaned.indexOf('{')
-    const end = cleaned.lastIndexOf('}')
-
-    if (start >= 0 && end > start) {
-      try {
-        return JSON.parse(cleaned.slice(start, end + 1))
-      } catch {
-        // Continue below.
-      }
-    }
-
-    throw new Error('The AI returned an invalid response. Please try again.')
-  }
 }
