@@ -107,7 +107,8 @@ export async function POST(request: Request) {
       throw new Error('DISCORD_WEBHOOK_URL is invalid.')
     }
 
-    const candidate = clampText(summary.candidate || candidateAnswerCount ? cleanTranscript.find(m => m.role === 'candidate')?.content : 'Unknown Candidate', 100)
+    const fallbackCandidate = cleanTranscript.find(m => m.role === 'candidate')?.content || 'Unknown Candidate'
+    const candidate = clampText(summary.candidate || fallbackCandidate, 100)
     const strengths = cleanList(summary.strengths)
     const concerns = cleanList(summary.concerns)
     const evidence = cleanList(summary.evidence)
