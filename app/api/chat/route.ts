@@ -21,8 +21,8 @@ export async function POST(request: Request) {
     const transcript = Array.isArray(body.transcript) ? body.transcript : []
     const answerCount = transcript.filter((m: any) => m?.role === 'candidate').length
 
-    if (answerCount >= MAX_ANSWERS) {
-      return NextResponse.json({ done: true, questionNumber: MAX_ANSWERS })
+    if (answerCount >= MAX_ANSWERS || answerCount >= MIN_ANSWERS) {
+      return NextResponse.json({ done: true, questionNumber: answerCount })
     }
 
     if (answerCount === 0) {
@@ -42,7 +42,7 @@ export async function POST(request: Request) {
       })),
       {
         role: 'user' as const,
-        content: `Ask exactly ONE short next interview question. There have been ${answerCount} applicant answers. If this is answer ${MIN_ANSWERS} or later, keep gathering useful evidence but stay concise. Reply with ONLY the question text. No JSON, no explanation, no labels.`,
+        content: 'Ask exactly ONE short next interview question. Base it on the applicant’s previous answers and position. Reply with ONLY the question text. No JSON, no explanation, no labels.',
       },
     ]
 
@@ -53,13 +53,10 @@ export async function POST(request: Request) {
       throw new Error('The AI returned an empty question.')
     }
 
-    const nextQuestionNumber = answerCount + 1
-    const doneAfterThisAnswer = answerCount >= MIN_ANSWERS
-
     return NextResponse.json({
-      question: doneAfterThisAnswer ? undefined : question,
-      done: doneAfterThisAnswer,
-      questionNumber: Math.min(nextQuestionNumber, MAX_ANSWERS),
+      question,
+      done: false,
+      questionNumber: answerCount + 1,
       focus: 'adaptive',
     })
   } catch (error) {
