@@ -1,8 +1,16 @@
 import { NextResponse } from 'next/server'
 import { SYSTEM_PROMPT } from '@/lib/prompts'
-import { askHF, extractJson } from '@/lib/hf'
+import { askHF } from '@/lib/hf'
 
 export const runtime = 'nodejs'
+
+function cleanQuestion(text: string) {
+  return text
+    .replace(/^```[\s\S]*?```$/g, '')
+    .replace(/^\s*(question|next question)\s*:\s*/i, '')
+    .replace(/^\s*["']|["']\s*$/g, '')
+    .trim()
+}
 
 export async function POST(request: Request) {
   try {
@@ -26,26 +34,28 @@ export async function POST(request: Request) {
 
     const messages = [
       { role: 'system' as const, content: SYSTEM_PROMPT },
-      ...transcript.slice(-40).map((m: any) => ({
+      ...transcript.slice(-30).map((m: any) => ({
         role: m.role === 'candidate' ? 'user' as const : 'assistant' as const,
         content: String(m.content ?? ''),
       })),
       {
         role: 'user' as const,
-        content: `There have been ${answerCount} applicant answers so far. Generate the next single question.`,
+        content: `Ask exactly ONE short next interview question. There have been ${answerCount} applicant answers. Reply with ONLY the question text. No JSON, no explanation, no labels.`,
       },
     ]
 
     const raw = await askHF(messages)
-    const parsed = extractJson(raw)
+    const question = cleanQuestion(raw)
 
-    if (typeof parsed.question !== 'string') throw new Error('Invalid question response.')
+    if (!question || question.length < 4) {
+      throw new Error('The AI returned an empty question.')
+    }
 
     return NextResponse.json({
-      question: parsed.question,
-      done: Boolean(parsed.done && answerCount >= 10),
+      question,
+      done: answerCount >= 10 && answerCount >= 17,
       questionNumber: Math.min(answerCount + 1, 17),
-      focus: parsed.focus || 'general',
+      focus: 'adaptive',
     })
   } catch (error) {
     console.error(error)
